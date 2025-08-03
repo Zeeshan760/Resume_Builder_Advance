@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Resume Builder - MVP</title>
+    
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- PDF Generation Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" xintegrity="sha512-BNaRQnYJYiPSqHHDb58B0yaPfCu+Wgds8Gp/gU33kqBtgNS4tSPHuGibyoVBL5gI9kDXrdQiBCY5bZEZOY+99A==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" xintegrity="sha512-qZvrmS2ekKPF2mSznTQsxqPgnpkI4DNTlrdUmTzrDgektczlKNRRhy5X5AAOnx5S09ydFYWWNSfcEqDTTHgtNA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+    <!-- React and Babel for in-browser JSX transformation -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Class to hide elements from the PDF output */
+        .no-print {
+            /* This class will be used to hide controls during PDF generation */
+        }
+        /* Custom styles for contentEditable fields */
+        [contentEditable="true"]:focus {
+            outline: 2px solid #3b82f6; /* blue-500 */
+            background-color: #eff6ff; /* blue-50 */
+            border-radius: 4px;
+        }
+        [contentEditable="true"] {
+            transition: background-color 0.2s ease-in-out;
+            padding: 2px;
+            margin: -2px;
+        }
+        /* A4 paper aspect ratio for the resume container */
+        @media print {
+            body * {
+                visibility: hidden;
+            }
+            #resume-container, #resume-container * {
+                visibility: visible;
+            }
+            #resume-container {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+            }
+            .no-print {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { jsPDF } = window.jspdf;
+
+        // --- Initial Data ---
+        // This object holds the default content for the resume.
+        const initialResumeData = {
+            name: "Alex Doe",
+            title: "Senior Software Engineer",
+            contact: {
+                email: "alex.doe@email.com",
+                phone: "+1 (555) 123-4567",
+                website: "alexdoe.dev",
+                location: "San Francisco, CA"
+            },
+            summary: "Innovative Senior Software Engineer with over 8 years of experience in developing scalable web applications and leading cross-functional teams. Proficient in full-stack development with a strong focus on performance, user experience, and creating high-quality, maintainable code. Passionate about leveraging new technologies to solve complex problems.",
+            experience: [
+                {
+                    id: 1,
+                    company: "Tech Solutions Inc.",
+                    role: "Senior Software Engineer",
+                    period: "Jan 2020 - Present",
+                    description: "Lead the development of a new client-facing analytics dashboard using React and D3.js, resulting in a 30% increase in user engagement. Mentored a team of 4 junior developers, improving team productivity by 25%. Architected and implemented a microservices-based backend with Node.js and Docker, enhancing system scalability and reducing latency by 40%."
+                },
+                {
+                    id: 2,
+                    company: "Innovate Corp.",
+                    role: "Software Engineer",
+                    period: "Jun 2016 - Dec 2019",
+                    description: "Developed and maintained features for a large-scale e-commerce platform using Angular and Java Spring Boot. Collaborated with product managers and designers to translate requirements into technical solutions. Optimized database queries and application code, which improved page load times by 50%."
+                }
+            ],
+            education: [
+                {
+                    id: 1,
+                    institution: "State University",
+                    degree: "M.S. in Computer Science",
+                    period: "2014 - 2016"
+                },
+                {
+                    id: 2,
+                    institution: "State University",
+                    degree: "B.S. in Computer Science",
+                    period: "2010 - 2014"
+                }
+            ],
+            skills: "JavaScript, TypeScript, React, Node.js, Python, Java, PostgreSQL, MongoDB, Docker, AWS, Agile Methodologies"
+        };
+        
+        // --- Reusable Editable Component ---
+        // This component makes any text element editable on the page.
+        const Editable = ({ initialValue, onSave, className, as: Component = 'div' }) => {
+            const [text, setText] = useState(initialValue);
+
+            const handleBlur = () => {
+                onSave(text);
+            };
+
+            const handleInput = (e) => {
+                setText(e.currentTarget.textContent);
+            };
+            
+            // Update internal state if initialValue prop changes
+            useEffect(() => {
+                setText(initialValue);
+            }, [initialValue]);
+
+            return (
+                <Component
+                    contentEditable
+                    suppressContentEditableWarning
+                    onBlur={handleBlur}
+                    onInput={handleInput}
+                    className={`${className} cursor-text`}
+                    dangerouslySetInnerHTML={{ __html: text }}
+                />
+            );
+        };
+
+        // --- Main App Component ---
+        const App = () => {
+            const [resumeData, setResumeData] = useState(initialResumeData);
+            const [isDownloading, setIsDownloading] = useState(false);
+            const resumeRef = useRef(null);
+
+            // Generic handler to update any field in the resume data
+            const handleUpdate = (path, value) => {
+                setResumeData(prevData => {
+                    const keys = path.split('.');
+                    const newData = JSON.parse(JSON.stringify(prevData)); // Deep copy
+                    let current = newData;
+                    for (let i = 0; i < keys.length - 1; i++) {
+                        current = current[keys[i]];
+                    }
+                    current[keys[keys.length - 1]] = value;
+                    return newData;
+                });
+            };
+
+            // Handler to update nested array items like experience or education
+            const handleUpdateItem = (listName, id, field, value) => {
+                setResumeData(prevData => {
+                    const newList = prevData[listName].map(item => {
+                        if (item.id === id) {
+                            return { ...item, [field]: value };
+                        }
+                        return item;
+                    });
+                    return { ...prevData, [listName]: newList };
+                });
+            };
+
+            // PDF Download Logic
+            const handleDownloadPDF = () => {
+                setIsDownloading(true);
+                // We use a timeout to allow the UI to update (hide buttons, etc.) before capturing
+                setTimeout(() => {
+                    const resumeElement = resumeRef.current;
+                    if (!resumeElement) return;
+
+                    // Temporarily remove focus from any editable element
+                    if (document.activeElement) document.activeElement.blur();
+                    
+                    html2canvas(resumeElement, {
+                        scale: 2, // Higher scale for better quality
+                        useCORS: true,
+                        logging: false,
+                        windowWidth: resumeElement.scrollWidth,
+                        windowHeight: resumeElement.scrollHeight
+                    }).then(canvas => {
+                        const imgData = canvas.toDataURL('image/png');
+                        // A4 dimensions in mm: 210 x 297
+                        const pdf = new jsPDF({
+                            orientation: 'portrait',
+                            unit: 'mm',
+                            format: 'a4'
+                        });
+
+                        const pdfWidth = pdf.internal.pageSize.getWidth();
+                        const pdfHeight = pdf.internal.pageSize.getHeight();
+                        const canvasWidth = canvas.width;
+                        const canvasHeight = canvas.height;
+                        const canvasAspectRatio = canvasWidth / canvasHeight;
+                        const pdfAspectRatio = pdfWidth / pdfHeight;
+
+                        let finalWidth, finalHeight;
+
+                        if (canvasAspectRatio > pdfAspectRatio) {
+                            finalWidth = pdfWidth;
+                            finalHeight = pdfWidth / canvasAspectRatio;
+                        } else {
+                            finalHeight = pdfHeight;
+                            finalWidth = pdfHeight * canvasAspectRatio;
+                        }
+                        
+                        // Center the image in the PDF
+                        const x = (pdfWidth - finalWidth) / 2;
+                        const y = 0; // Start from top
+
+                        pdf.addImage(imgData, 'PNG', x, y, finalWidth, finalHeight);
+                        pdf.save(`Resume-${resumeData.name.replace(' ', '_')}.pdf`);
+                        setIsDownloading(false);
+                    }).catch(err => {
+                        console.error("Error generating PDF:", err);
+                        setIsDownloading(false);
+                    });
+                }, 100); // 100ms delay
+            };
+
+
+            return (
+                <div className="min-h-screen flex flex-col lg:flex-row items-start justify-center p-4 sm:p-6 lg:p-8">
+                    
+                    {/* --- Resume Preview --- */}
+                    <main id="resume-container" ref={resumeRef} className="w-full max-w-4xl bg-white shadow-2xl rounded-lg p-8 sm:p-12 text-gray-800 leading-relaxed">
+                        {/* Header Section */}
+                        <header className="flex flex-col sm:flex-row justify-between items-start border-b-2 border-gray-200 pb-6 mb-6">
+                            <div className="text-center sm:text-left">
+                                <Editable as="h1" className="text-4xl font-bold text-gray-900" initialValue={resumeData.name} onSave={(val) => handleUpdate('name', val)} />
+                                <Editable as="h2" className="text-xl font-medium text-blue-600 mt-1" initialValue={resumeData.title} onSave={(val) => handleUpdate('title', val)} />
+                            </div>
+                            <div className="text-sm text-gray-600 mt-4 sm:mt-0 text-center sm:text-right space-y-1">
+                                <Editable initialValue={resumeData.contact.email} onSave={(val) => handleUpdate('contact.email', val)} className="block"/>
+                                <Editable initialValue={resumeData.contact.phone} onSave={(val) => handleUpdate('contact.phone', val)} className="block"/>
+                                <Editable initialValue={resumeData.contact.website} onSave={(val) => handleUpdate('contact.website', val)} className="block"/>
+                                <Editable initialValue={resumeData.contact.location} onSave={(val) => handleUpdate('contact.location', val)} className="block"/>
+                            </div>
+                        </header>
+
+                        {/* Summary Section */}
+                        <section>
+                            <h3 className="text-lg font-semibold text-gray-700 border-b border-gray-200 pb-1 mb-3">Professional Summary</h3>
+                            <Editable as="p" className="text-sm text-gray-600" initialValue={resumeData.summary} onSave={(val) => handleUpdate('summary', val)} />
+                        </section>
+
+                        {/* Experience Section */}
+                        <section className="mt-6">
+                            <h3 className="text-lg font-semibold text-gray-700 border-b border-gray-200 pb-1 mb-3">Work Experience</h3>
+                            {resumeData.experience.map(exp => (
+                                <div key={exp.id} className="mb-4 last:mb-0">
+                                    <div className="flex justify-between items-baseline">
+                                        <Editable as="h4" className="text-md font-semibold text-blue-700" initialValue={exp.role} onSave={(val) => handleUpdateItem('experience', exp.id, 'role', val)} />
+                                        <Editable as="p" className="text-sm font-medium text-gray-500" initialValue={exp.period} onSave={(val) => handleUpdateItem('experience', exp.id, 'period', val)} />
+                                    </div>
+                                    <Editable as="p" className="text-sm font-medium text-gray-600 italic" initialValue={exp.company} onSave={(val) => handleUpdateItem('experience', exp.id, 'company', val)} />
+                                    <Editable as="p" className="text-sm text-gray-600 mt-1" initialValue={exp.description} onSave={(val) => handleUpdateItem('experience', exp.id, 'description', val)} />
+                                </div>
+                            ))}
+                        </section>
+                        
+                        {/* Education Section */}
+                        <section className="mt-6">
+                            <h3 className="text-lg font-semibold text-gray-700 border-b border-gray-200 pb-1 mb-3">Education</h3>
+                            {resumeData.education.map(edu => (
+                                <div key={edu.id} className="mb-3 last:mb-0">
+                                    <div className="flex justify-between items-baseline">
+                                        <Editable as="h4" className="text-md font-semibold text-blue-700" initialValue={edu.degree} onSave={(val) => handleUpdateItem('education', edu.id, 'degree', val)} />
+                                        <Editable as="p" className="text-sm font-medium text-gray-500" initialValue={edu.period} onSave={(val) => handleUpdateItem('education', edu.id, 'period', val)} />
+                                    </div>
+                                    <Editable as="p" className="text-sm font-medium text-gray-600 italic" initialValue={edu.institution} onSave={(val) => handleUpdateItem('education', edu.id, 'institution', val)} />
+                                </div>
+                            ))}
+                        </section>
+
+                        {/* Skills Section */}
+                        <section className="mt-6">
+                            <h3 className="text-lg font-semibold text-gray-700 border-b border-gray-200 pb-1 mb-3">Skills</h3>
+                            <Editable as="p" className="text-sm text-gray-600" initialValue={resumeData.skills} onSave={(val) => handleUpdate('skills', val)} />
+                        </section>
+
+                    </main>
+
+                    {/* --- Controls Panel --- */}
+                    <aside className={`w-full lg:w-64 lg:ml-8 mt-8 lg:mt-0 ${isDownloading ? 'no-print' : ''}`}>
+                        <div className="bg-white p-6 rounded-lg shadow-lg sticky top-8">
+                            <h3 className="font-bold text-lg mb-4">Controls</h3>
+                            <button 
+                                onClick={handleDownloadPDF}
+                                disabled={isDownloading}
+                                className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-300 transition-all duration-300 disabled:bg-blue-300 disabled:cursor-not-allowed flex items-center justify-center"
+                            >
+                                {isDownloading ? (
+                                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                ) : (
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
+                                    </svg>
+                                )}
+                                {isDownloading ? 'Downloading...' : 'Download PDF'}
+                            </button>
+                            <p className="text-xs text-gray-500 mt-4 text-center">
+                                Click on any text in the resume to edit it directly.
+                            </p>
+                        </div>
+                    </aside>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
